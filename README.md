@@ -8,7 +8,7 @@ Dependencies:
 Python 2.7, OpenCV, NumPy, DivX codecs
 
 Usage:
-python seam_carving.py <input_filepath> <output_filepath>       
+python seam_carving.py [input_filepath] [output_filepath]       
 - input_filepath  is the path to the input image
 - output_filepath is the path to the desired output video [must have a .avi extension]
 
