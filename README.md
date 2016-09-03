@@ -12,7 +12,8 @@ Read more about it [here](https://en.wikipedia.org/wiki/Seam_carving)
 `python seam_carving.py [input_image] [output_video]`
 - input_filepath is the path to the input image
 - output_video is the desired path for the output video
-Note that only an "avi" extension is presently supported for the output.
+<br>
+(Note that only ".avi" output is presently supported)
 
 ### Examples:
 
