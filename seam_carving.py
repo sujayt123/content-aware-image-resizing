@@ -85,9 +85,10 @@ def main(path_to_image, path_to_output):
 
     param:  path_to_image   the path specifying the location of the image on disk
     param:  path_to_output  the path to the desired output video
-    """
+    """   
     color_image = cv2.imread(path_to_image)         
-    video = cv2.VideoWriter(path_to_output, cv2.VideoWriter_fourcc(*'MJPG'), 15, (len(color_image), len(color_image[0])))   
+    print len(color_image), len(color_image[0])
+    video = cv2.VideoWriter(path_to_output, cv2.VideoWriter_fourcc(*'MJPG'), 15, (len(color_image[0]), len(color_image)))   
     for i in xrange(len(color_image[0]) - 1):
         energy_matrix = compute_scoring_matrix(color_image)        
         seam = detect_seam(energy_matrix)
