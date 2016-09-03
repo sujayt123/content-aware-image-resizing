@@ -89,7 +89,6 @@ def main(path_to_image, path_to_output):
     color_image = cv2.imread(path_to_image)         
     video = cv2.VideoWriter(path_to_output, cv2.VideoWriter_fourcc(*'MJPG'), 15, (len(color_image), len(color_image[0])))   
     for i in xrange(len(color_image[0]) - 1):
-        print i
         energy_matrix = compute_scoring_matrix(color_image)        
         seam = detect_seam(energy_matrix)
         color_image = np.asarray(carve_seam(seam, color_image.tolist(), energy_matrix), dtype=np.uint8)
@@ -105,12 +104,13 @@ if __name__ == "__main__":
         print "Author: Sujay Tadwalkar"
         print
         print "Command Syntax:"
-        print "python seam-carving.py [options]"
+        print "python seam_carving.py [options]"
         print
         print "Options:"
-        print "-h".ljust(15), "shows this help message".ljust(50)
-        print "<input_filepath> <output_filepath>".ljust(15), "input_filepath  is the path (absolute or relative) to the input image".ljust(50)
-        print " " * 16 + "output_filepath is the path (absolute or relative) to the desired output video [must end with a .avi extension]".ljust(50)
+        print "-h".ljust(40), "shows this help message".ljust(50)
+        print "<input_filepath> <output_filepath>".ljust(40), "input_filepath  is the path (absolute or relative) to the input image".ljust(50)
+        print " " * 41 + "output_filepath is the path (absolute or relative) to the desired output video [must end with a .avi extension]".ljust(50)
+        print 
         sys.exit(0)
     if len(args) <= 2 or args[2].endswith(".avi") is False:    
         print >>sys.stderr, "Please specify an appropriate set of command-line arguments. Run with -h flag for more details."        
