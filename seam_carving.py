@@ -5,13 +5,12 @@ import sys
 def compute_scoring_matrix(color_image):  
     """
     Computes the energy matrix for the input image.
-
     param:  color_image     a matrix of RGB values corresponding to the current image
     return: gradient        a matrix of values indicating the "value", or "information", of a pixel in the image
     """
     grayscale = cv2.cvtColor(color_image, cv2.COLOR_RGB2GRAY)
     # Filter high frequency noise out of calculations of the energy matrix. 
-    blur = cv2.blur(grayscale,(5,5))     
+    blur = cv2.blur(grayscale,(5,5))
     # Convolve image with Sobel_x kernel.
     sobelx64f = cv2.Sobel(blur,cv2.CV_64F,1,0,ksize=5)
     abs_sobelx64f = np.absolute(sobelx64f)
@@ -31,39 +30,50 @@ def detect_seam(energy_matrix):
 
     param:  energy_matrix    the cost matrix 
     return: path             a list of the coordinates of the pixels in the minimum cost seam
-    """    
+    """        
     rows, cols = len(energy_matrix), len(energy_matrix[0])
-    parent = {}   
-    # Pad left and right of each column with +inf to resolve boundary checks.   
-    DP = [[float("inf")] * (cols + 2) for i in range(rows)]
+
+    # A compact matrix that encodes "parent" references to conduct traceback after DP.
+    parent = np.zeros((rows, cols + 2), dtype=np.int8)
+
+    # Use two arrays that will be continually swapped for a memory-efficient version of the DP algo.
+    prev, curr = np.full(cols + 2, np.inf), np.full(cols + 2, np.inf)
+    
     # Initialize first row of matrix.
     for j in range(1, cols + 1):
-        DP[0][j] = energy_matrix[0][j - 1]
+        prev[j] = energy_matrix[0][j - 1]
 
     # Compute DP matrix.
     for i in range(1, rows):
         for j in range(1, cols + 1):
-            # the path can come from top_left, top, top_right
-            possible_vals = [DP[i - 1][j - 1], DP[i - 1][j], DP[i - 1][j + 1]]
-            min_parent_idx = np.argmin(possible_vals)
-            if min_parent_idx == 0:
-                parent[(i, j)] = (i - 1, j - 1)
-            elif min_parent_idx == 1:
-                parent[(i, j)] = (i - 1, j)
+            curr[j] = energy_matrix[i][j - 1]
+            if prev[j - 1] <=  prev[j] and prev[j - 1] <= prev[j + 1]:
+                curr[j] += prev[j - 1]
+            elif prev[j] <=  prev[j - 1] and prev[j] <= prev[j + 1]:
+                parent[i][j] = 1
+                curr[j] += prev[j]
             else:
-                parent[(i, j)] = (i - 1, j + 1)
-            DP[i][j] = possible_vals[min_parent_idx] + energy_matrix[i][j - 1]
+                parent[i][j] = 2
+                curr[j] += prev[j + 1]               
+        # Swap the prev and curr array.
+        temp = prev
+        prev = curr
+        curr = temp
 
     # Find where the minimum cost path ends in the bottom row of the matrix.
-    min_end_idx = np.argmin(DP[-1])
+    min_end_idx = np.argmin(prev)
+    curr_coord = [rows - 1, min_end_idx]
     path = [(rows - 1, min_end_idx - 1)]
-    # Trace back to its starting point in the top row of the matrix.    
-    temp = (rows - 1, min_end_idx)
-    while temp in parent:
-        temp = parent[temp]
+    # Trace back using the parent matrix to determine the actual seam.
+    while curr_coord[0] > 0:
+        if parent[curr_coord[0]][curr_coord[1]] == 0:
+            curr_coord[1] -= 1
+        elif parent[curr_coord[0]][curr_coord[1]] == 2:
+            curr_coord[1] += 1          
+        curr_coord[0] -= 1                          
         # Note that in our output, we must shift all our column values by 1. 
         # This is because of the sentinels in the DP matrix.
-        path.append((temp[0], temp[1] -1))
+        path.append((curr_coord[0], curr_coord[1] - 1))
     return path
 
 def carve_seam(seam, color_image, energy_matrix):
