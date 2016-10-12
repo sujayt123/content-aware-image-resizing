@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor, wait
+from multiprocessing import Process, Pipe
 import cv2
 import math
 import numpy as np
@@ -26,7 +26,7 @@ def compute_scoring_matrix(color_image):
     # Preserve each row, but throw out any of the padded columns from consideration.
     return gradient.astype(int).tolist()
 
-def update(parent, curr, prev, top_left, top, top_right):
+def update(parent, curr, iteration, j, prev, top_left, top, top_right):
     if top_left <=  top and top_left <= top_right:
         curr[j] += top_left
     elif top <=  top_left and top <= top_right:
@@ -36,38 +36,41 @@ def update(parent, curr, prev, top_left, top, top_right):
         parent[iteration][j] = 2
         curr[j] += top_right
 
-def process_inf(num_rows, end_edge_conn):
-    for i in range(num_rows):
-        end_edge_conn.send(float("inf"))    
-        end_edge_conn.recv()
-    return
-
-def process_main(num_rows, left_edge_conn, right_edge_conn, energy_matrix, start_idx, end_idx):    
-    prev, curr, parent = np.zeros(end_idx - start_idx), np.zeros(end_idx - start_idx), np.zeros((rows, end_idx - start_idx), dtype=uint8)
+def process_main(num_rows, energy_matrix, start_idx, end_idx, result_pipe=None, left_edge_conn=None, right_edge_conn=None):    
+    print(start_idx, end_idx)
+    prev, curr, parent = np.zeros(end_idx - start_idx), np.zeros(end_idx - start_idx), np.zeros((num_rows, end_idx - start_idx), dtype=np.uint8)
     for j in range(end_idx - start_idx):
         prev[j] = energy_matrix[0][start_idx + j]
-    left_edge_conn.send(prev[0])
-    right_edge_conn.send(prev[-1])
+    if start_idx > 0:
+        left_edge_conn.send(prev[0])   
+    if end_idx < len(energy_matrix[0]):
+        right_edge_conn.send(prev[-1])
     for i in range(1, num_rows):
-        # Receive right-edge value from left process and compute first element accordingly.
-        left_recv_val = left_edge_conn.recv()
-        update(parent, curr, prev, left_recv_val, prev[j], prev[j + 1])
-        # Notify the left peer of the left-edge value.
-        left_recv_val.send(curr[0])
+        # Initialize current with initial value.
+        for j in range(len(curr)):
+            curr[j] = energy_matrix[i][start_idx + j]
+        # Receive right-edge value from left process and compute first element accordingly.        
+        left_recv_val = left_edge_conn.recv() if start_idx > 0 else float("inf")
+        update(parent, curr, i, 0, prev, left_recv_val, prev[0], prev[1])
+        # Notify the left peer, if any, of the left-edge value.        
+        if start_idx > 0:
+            left_edge_conn.send(curr[0]) 
         # Receive left-edge value from right process and compute last element accordingly.
-        right_recv_val  right_edge_conn.recv()
-        update(parent, curr, prev, prev[j - 1], prev[j], right_recv_val)        
-        # Notify the right peer of the right-edge value.
-        right_recv_val.send(curr[-1])
+        right_recv_val = right_edge_conn.recv() if end_idx < len(energy_matrix[0]) else float("inf")
+        update(parent, curr, i, -1, prev, prev[-2], prev[-1], right_recv_val)
+        # Notify the right peer, if any, of the right-edge value.        
+        if end_idx < len(energy_matrix[0]):
+            right_edge_conn.send(curr[-1])
         # Compute internal values.
         for j in range(1, len(prev) - 1):
             curr[j] = energy_matrix[i][start_idx + j]
-            update(parent, curr, prev, prev[j - 1], prev[j], prev[j + 1])
+            update(parent, curr, i, j, prev, prev[j - 1], prev[j], prev[j + 1])
         # Swap prev and curr.
         temp = prev
         prev = curr
         curr = temp
-    return prev, parent
+    # Notify the master process of the results. The master needs access to both the final row of the DP matrix, as well as the parent matrix.
+    result_pipe.send((prev, parent))
 
 def detect_seam(energy_matrix):
     """
@@ -76,21 +79,31 @@ def detect_seam(energy_matrix):
     param:  energy_matrix    the cost matrix 
     return: path             a list of the coordinates of the pixels in the minimum cost seam
     """        
-    left_to_right, right_to_left = 
-    
-
-
-
-    # .....
-
-
-
-
+    num_cpus = 4
+    processes = []
+    result_receivers = []
+    chunk_length = (int) (math.ceil(1.0 * len(energy_matrix[0]) / num_cpus))        
+    left_pipe_for_curr_process = None
+    for i in range(num_cpus):
+        start_idx = i * chunk_length
+        end_idx = min((i + 1) * chunk_length, len(energy_matrix[0]))
+        right_pipe_for_curr_process, left_pipe_for_next_process = Pipe()
+        result_receiver, result_sender = Pipe()
+        processes.append(Process(target=process_main, args=(len(energy_matrix), energy_matrix, start_idx, end_idx, result_sender, left_pipe_for_curr_process, right_pipe_for_curr_process,)))
+        result_receivers.append(result_receiver)
+        processes[-1].start()
+        left_pipe_for_curr_process = left_pipe_for_next_process
+    for p in processes:
+        p.join()
+    last_row_list, parent_list = zip(*[x.recv() for x in result_receivers])
+    last_row = np.concatenate(last_row_list)
+    parent = np.concatenate(parent_list, axis=1)
+    rows = len(energy_matrix)    
 
     # Find where the minimum cost path ends in the bottom row of the matrix.
-    min_end_idx = np.argmin(prev)
+    min_end_idx = np.argmin(last_row)
     curr_coord = [rows - 1, min_end_idx]
-    path = [(rows - 1, min_end_idx - 1)]
+    path = [tuple(curr_coord)]
     # Trace back using the parent matrix to determine the actual seam.
     while curr_coord[0] > 0:
         if parent[curr_coord[0]][curr_coord[1]] == 0:
@@ -100,7 +113,7 @@ def detect_seam(energy_matrix):
         curr_coord[0] -= 1                          
         # Note that in our output, we must shift all our column values by 1. 
         # This is because of the sentinels in the DP matrix.
-        path.append((curr_coord[0], curr_coord[1] - 1))
+        path.append(tuple(curr_coord))
     return path
 
 def carve_seam(seam, color_image, energy_matrix):
@@ -126,12 +139,11 @@ def main(path_to_image, path_to_output):
     color_image = cv2.imread(path_to_image)         
     video = cv2.VideoWriter(path_to_output, cv2.VideoWriter_fourcc(*'MJPG'), 15, (len(color_image[0]), len(color_image)))   
     # We can use a with statement to ensure threads are cleaned up promptly
-    with ProcessPoolExecutor(max_workers=4) as executor:
-        for i in range(len(color_image[0]) - 1):
-            energy_matrix = compute_scoring_matrix(color_image)        
-            seam = detect_seam(energy_matrix, executor)            
-            color_image = np.asarray(carve_seam(seam, color_image.tolist(), energy_matrix), dtype=np.uint8)
-            video.write(cv2.copyMakeBorder(color_image, 0, 0, 0, i + 1, cv2.BORDER_CONSTANT, value=[255,255,255]))
+    for i in range(len(color_image[0]) - 1):
+        energy_matrix = compute_scoring_matrix(color_image)        
+        seam = detect_seam(energy_matrix)            
+        color_image = np.asarray(carve_seam(seam, color_image.tolist(), energy_matrix), dtype=np.uint8)
+        video.write(cv2.copyMakeBorder(color_image, 0, 0, 0, i + 1, cv2.BORDER_CONSTANT, value=[255,255,255]))
 
 if __name__ == "__main__":
     args = sys.argv
