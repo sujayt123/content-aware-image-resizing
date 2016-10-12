@@ -1,4 +1,4 @@
-from multiprocessing import Process, Pipe
+from multiprocessing import Pipe, Pool
 import cv2
 import math
 import numpy as np
@@ -36,8 +36,7 @@ def update(parent, curr, iteration, j, prev, top_left, top, top_right):
         parent[iteration][j] = 2
         curr[j] += top_right
 
-def process_main(num_rows, energy_matrix, start_idx, end_idx, result_pipe=None, left_edge_conn=None, right_edge_conn=None):    
-    print(start_idx, end_idx)
+def process_main(num_rows, energy_matrix, start_idx, end_idx, left_edge_conn=None, right_edge_conn=None):    
     prev, curr, parent = np.zeros(end_idx - start_idx), np.zeros(end_idx - start_idx), np.zeros((num_rows, end_idx - start_idx), dtype=np.uint8)
     for j in range(end_idx - start_idx):
         prev[j] = energy_matrix[0][start_idx + j]
@@ -70,32 +69,27 @@ def process_main(num_rows, energy_matrix, start_idx, end_idx, result_pipe=None, 
         prev = curr
         curr = temp
     # Notify the master process of the results. The master needs access to both the final row of the DP matrix, as well as the parent matrix.
-    result_pipe.send((prev, parent))
+    return (prev, parent)
 
-def detect_seam(energy_matrix):
+def detect_seam(energy_matrix, pool):
     """
     Uses dynamic programming to detect a minimum cost contiguous seam from top to bottom of the input image.
 
     param:  energy_matrix    the cost matrix 
     return: path             a list of the coordinates of the pixels in the minimum cost seam
     """        
-    num_cpus = 4
-    processes = []
-    result_receivers = []
+    num_cpus = 3
+    tasks = []
     chunk_length = (int) (math.ceil(1.0 * len(energy_matrix[0]) / num_cpus))        
     left_pipe_for_curr_process = None
     for i in range(num_cpus):
         start_idx = i * chunk_length
         end_idx = min((i + 1) * chunk_length, len(energy_matrix[0]))
         right_pipe_for_curr_process, left_pipe_for_next_process = Pipe()
-        result_receiver, result_sender = Pipe()
-        processes.append(Process(target=process_main, args=(len(energy_matrix), energy_matrix, start_idx, end_idx, result_sender, left_pipe_for_curr_process, right_pipe_for_curr_process,)))
-        result_receivers.append(result_receiver)
-        processes[-1].start()
+        tasks.append(pool.apply_async(process_main, (len(energy_matrix), energy_matrix, start_idx, end_idx, left_pipe_for_curr_process, right_pipe_for_curr_process,)))        
         left_pipe_for_curr_process = left_pipe_for_next_process
-    for p in processes:
-        p.join()
-    last_row_list, parent_list = zip(*[x.recv() for x in result_receivers])
+    
+    last_row_list, parent_list = zip(*[task.get() for task in tasks])
     last_row = np.concatenate(last_row_list)
     parent = np.concatenate(parent_list, axis=1)
     rows = len(energy_matrix)    
@@ -138,10 +132,11 @@ def main(path_to_image, path_to_output):
     """   
     color_image = cv2.imread(path_to_image)         
     video = cv2.VideoWriter(path_to_output, cv2.VideoWriter_fourcc(*'MJPG'), 15, (len(color_image[0]), len(color_image)))   
+    pool = Pool(3)
     # We can use a with statement to ensure threads are cleaned up promptly
-    for i in range(len(color_image[0]) - 1):
+    for i in range(len(color_image[0]) - 20):
         energy_matrix = compute_scoring_matrix(color_image)        
-        seam = detect_seam(energy_matrix)            
+        seam = detect_seam(energy_matrix, pool)            
         color_image = np.asarray(carve_seam(seam, color_image.tolist(), energy_matrix), dtype=np.uint8)
         video.write(cv2.copyMakeBorder(color_image, 0, 0, 0, i + 1, cv2.BORDER_CONSTANT, value=[255,255,255]))
 
